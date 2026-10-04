@@ -33,7 +33,7 @@ npm run build
 
 Pushes to `main` deploy via GitHub Pages:
 
-https://sajalsinha.github.io/biomass-intelligence-platform/
+https://cienergy.github.io/biomass-intelligence-platform/
 
 ## Architecture notes
 
