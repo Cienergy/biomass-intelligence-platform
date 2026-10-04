@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Map as MapLibreMap,
   NavigationControl,
@@ -8,6 +8,7 @@ import {
   type GeoJSONSource,
   type MapMouseEvent,
   type MapGeoJSONFeature,
+  type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { CatchmentDistrict } from "../lib/catchment";
@@ -23,7 +24,23 @@ type Props = {
   height?: number;
 };
 
-const STYLE = "https://tiles.openfreemap.org/styles/liberty";
+/** Free raster basemap — no API key, works without external style/glyphs. */
+const BASE_STYLE: StyleSpecification = {
+  version: 8,
+  sources: {
+    carto: {
+      type: "raster",
+      tiles: [
+        "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+        "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+        "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+      ],
+      tileSize: 256,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    },
+  },
+  layers: [{ id: "carto", type: "raster", source: "carto" }],
+};
 
 function circlePolygon(lon: number, lat: number, radiusKm: number, steps = 64): Feature<Polygon> {
   const coords: [number, number][] = [];
@@ -69,121 +86,114 @@ export function CatchmentMap({
   const readyRef = useRef(false);
   const onSelectRef = useRef(onSelectDistrict);
   onSelectRef.current = onSelectDistrict;
+  const [mapError, setMapError] = useState<string | null>(null);
 
-  // Init map once
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
+    let cancelled = false;
 
-    const map = new MapLibreMap({
-      container: containerRef.current,
-      style: STYLE,
-      center: [origin.lon, origin.lat],
-      zoom: 7,
-      attributionControl: { compact: true },
-    });
-    map.addControl(new NavigationControl({ visualizePitch: false }), "top-right");
-    map.addControl(new ScaleControl({ unit: "metric" }), "bottom-left");
-    popupRef.current = new Popup({ closeButton: true, maxWidth: "260px" });
-
-    map.on("load", () => {
-      map.addSource("catchment-ring", { type: "geojson", data: emptyFc() });
-      map.addLayer({
-        id: "catchment-fill",
-        type: "fill",
-        source: "catchment-ring",
-        paint: { "fill-color": "#1f6b4a", "fill-opacity": 0.08 },
+    try {
+      const map = new MapLibreMap({
+        container: containerRef.current,
+        style: BASE_STYLE,
+        center: [origin.lon, origin.lat],
+        zoom: 7,
+        attributionControl: { compact: true },
       });
-      map.addLayer({
-        id: "catchment-line",
-        type: "line",
-        source: "catchment-ring",
-        paint: { "line-color": "#1f6b4a", "line-width": 2, "line-opacity": 0.85 },
+      map.addControl(new NavigationControl({ visualizePitch: false }), "top-right");
+      map.addControl(new ScaleControl({ unit: "metric" }), "bottom-left");
+      popupRef.current = new Popup({ closeButton: true, maxWidth: "260px" });
+
+      map.on("error", (e) => {
+        console.warn("map error", e.error);
       });
 
-      map.addSource("facility", { type: "geojson", data: emptyFc() });
-      map.addLayer({
-        id: "facility-point",
-        type: "circle",
-        source: "facility",
-        paint: {
-          "circle-radius": 9,
-          "circle-color": "#c4a35a",
-          "circle-stroke-color": "#14201a",
-          "circle-stroke-width": 2,
-        },
+      map.on("load", () => {
+        if (cancelled) return;
+        map.addSource("catchment-ring", { type: "geojson", data: emptyFc() });
+        map.addLayer({
+          id: "catchment-fill",
+          type: "fill",
+          source: "catchment-ring",
+          paint: { "fill-color": "#1f6b4a", "fill-opacity": 0.1 },
+        });
+        map.addLayer({
+          id: "catchment-line",
+          type: "line",
+          source: "catchment-ring",
+          paint: { "line-color": "#1f6b4a", "line-width": 2, "line-opacity": 0.9 },
+        });
+
+        map.addSource("facility", { type: "geojson", data: emptyFc() });
+        map.addLayer({
+          id: "facility-point",
+          type: "circle",
+          source: "facility",
+          paint: {
+            "circle-radius": 9,
+            "circle-color": "#c4a35a",
+            "circle-stroke-color": "#14201a",
+            "circle-stroke-width": 2,
+          },
+        });
+
+        map.addSource("districts", { type: "geojson", data: emptyFc() });
+        map.addLayer({
+          id: "district-points",
+          type: "circle",
+          source: "districts",
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["get", "surplus"], 0, 5, 50, 8, 200, 14, 500, 18],
+            "circle-color": [
+              "case",
+              ["==", ["get", "selected"], 1],
+              "#b7791f",
+              ["interpolate", ["linear"], ["get", "intensity"], 0, "#93c5fd", 1, "#1d4ed8"],
+            ],
+            "circle-opacity": 0.92,
+            "circle-stroke-color": "#fff",
+            "circle-stroke-width": 1.25,
+          },
+        });
+
+        map.on("mouseenter", "district-points", () => {
+          map.getCanvas().style.cursor = "pointer";
+        });
+        map.on("mouseleave", "district-points", () => {
+          map.getCanvas().style.cursor = "";
+        });
+        map.on("click", "district-points", (e: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
+          const f = e.features?.[0];
+          if (!f?.properties || f.geometry.type !== "Point") return;
+          const id = String(f.properties.id);
+          onSelectRef.current?.(id);
+          const coords = (f.geometry as Point).coordinates as [number, number];
+          popupRef.current
+            ?.setLngLat(coords)
+            .setHTML(
+              `<strong>${f.properties.name}, ${f.properties.state}</strong><br/>${f.properties.surplus} KTPA · ${f.properties.distance} km · ${f.properties.pct}%`
+            )
+            .addTo(map);
+        });
+
+        readyRef.current = true;
+        requestAnimationFrame(() => map.resize());
       });
 
-      map.addSource("districts", { type: "geojson", data: emptyFc() });
-      map.addLayer({
-        id: "district-points",
-        type: "circle",
-        source: "districts",
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["get", "surplus"], 0, 5, 50, 8, 200, 14, 500, 18],
-          "circle-color": [
-            "case",
-            ["==", ["get", "selected"], 1],
-            "#b7791f",
-            ["interpolate", ["linear"], ["get", "intensity"], 0, "#93c5fd", 1, "#1d4ed8"],
-          ],
-          "circle-opacity": 0.9,
-          "circle-stroke-color": "#fff",
-          "circle-stroke-width": 1.25,
-        },
-      });
-      map.addLayer({
-        id: "district-labels",
-        type: "symbol",
-        source: "districts",
-        layout: {
-          "text-field": ["get", "name"],
-          "text-size": 11,
-          "text-offset": [0, 1.25],
-          "text-anchor": "top",
-          "text-optional": true,
-          "text-allow-overlap": false,
-        },
-        paint: {
-          "text-color": "#14201a",
-          "text-halo-color": "#ffffff",
-          "text-halo-width": 1.5,
-        },
-      });
+      mapRef.current = map;
+    } catch (err) {
+      setMapError(String(err));
+    }
 
-      map.on("mouseenter", "district-points", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "district-points", () => {
-        map.getCanvas().style.cursor = "";
-      });
-      map.on("click", "district-points", (e: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
-        const f = e.features?.[0];
-        if (!f?.properties || f.geometry.type !== "Point") return;
-        const id = String(f.properties.id);
-        onSelectRef.current?.(id);
-        const coords = (f.geometry as Point).coordinates as [number, number];
-        popupRef.current
-          ?.setLngLat(coords)
-          .setHTML(
-            `<strong>${f.properties.name}, ${f.properties.state}</strong><br/>${f.properties.surplus} KTPA · ${f.properties.distance} km · ${f.properties.pct}%`
-          )
-          .addTo(map);
-      });
-
-      readyRef.current = true;
-      requestAnimationFrame(() => map.resize());
-    });
-
-    mapRef.current = map;
     return () => {
+      cancelled = true;
       readyRef.current = false;
-      map.remove();
+      mapRef.current?.remove();
       mapRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update data + camera
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -229,11 +239,8 @@ export function CatchmentMap({
       const b = new LngLatBounds();
       b.extend([origin.lon, origin.lat]);
       for (const d of districts) b.extend([d.lon, d.lat]);
-      if (districts.length) {
-        map.fitBounds(b, { padding: 56, maxZoom: 8.5, duration: 600 });
-      } else {
-        map.easeTo({ center: [origin.lon, origin.lat], zoom: 7, duration: 600 });
-      }
+      if (districts.length) map.fitBounds(b, { padding: 56, maxZoom: 8.5, duration: 600 });
+      else map.easeTo({ center: [origin.lon, origin.lat], zoom: 7, duration: 600 });
       map.resize();
     };
 
@@ -243,7 +250,11 @@ export function CatchmentMap({
 
   return (
     <div className="map-shell" style={{ height }}>
-      <div ref={containerRef} className="map-canvas" />
+      {mapError ? (
+        <div className="state error">Map failed to load: {mapError}</div>
+      ) : (
+        <div ref={containerRef} className="map-canvas" />
+      )}
       <div className="map-legend">
         <span>
           <i className="dot facility" /> Facility
@@ -255,7 +266,7 @@ export function CatchmentMap({
           <i className="ring" /> Catchment (~{Math.round(radiusKm / Math.max(roadFactor, 0.01))} km geo)
         </span>
       </div>
-      <div className="map-credit">MapLibre · OpenFreeMap · OSM</div>
+      <div className="map-credit">MapLibre · CARTO / OSM</div>
     </div>
   );
 }

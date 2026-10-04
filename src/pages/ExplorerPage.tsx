@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { LocationPicker } from "../components/LocationPicker";
 import { CatchmentMap } from "../components/CatchmentMap";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { useData } from "../lib/DataContext";
 import { buildCatchment } from "../lib/catchment";
 import { optimiseRadius } from "../lib/optimiser";
@@ -118,15 +119,17 @@ export function ExplorerPage() {
           </div>
         </div>
 
-        <CatchmentMap
-          origin={catchment.origin}
-          radiusKm={catchment.radiusKm}
-          roadFactor={catchment.roadFactor}
-          districts={catchment.districts}
-          selectedDistrictId={focusDistrict}
-          onSelectDistrict={setFocusDistrict}
-          height={540}
-        />
+        <ErrorBoundary fallback={<div className="state error">Map failed — tables below still work.</div>}>
+          <CatchmentMap
+            origin={catchment.origin}
+            radiusKm={catchment.radiusKm}
+            roadFactor={catchment.roadFactor}
+            districts={catchment.districts}
+            selectedDistrictId={focusDistrict}
+            onSelectDistrict={setFocusDistrict}
+            height={540}
+          />
+        </ErrorBoundary>
 
         {focused && (
           <div className="focus-bar">
