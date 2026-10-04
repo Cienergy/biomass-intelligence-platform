@@ -32,7 +32,6 @@ export function ExplorerPage() {
     setApplication,
   } = useData();
   const [focusDistrict, setFocusDistrict] = useState<string | null>(null);
-
   const filter = feedstockFilter.length ? feedstockFilter : null;
 
   const catchment = useMemo(() => {
@@ -75,38 +74,24 @@ export function ExplorerPage() {
 
   if (loading) return <div className="state">Loading district biomass dataset…</div>;
   if (error) return <div className="state error">{error}</div>;
-  if (!dataset || !catchment || !security || !optimiser) return <div className="state">No catchment for this location.</div>;
+  if (!dataset || !catchment || !security || !optimiser) {
+    return <div className="state">No catchment for this location. Pick a district above.</div>;
+  }
 
   return (
     <div className="explorer">
-      <div className="hero-line">
-        <div>
-          <h1>Where can you realistically source biomass?</h1>
-          <p>
-            Screen any Indian location for surplus biomass by radius, feedstock, supply security and application fit —
-            technology-agnostic for pellets, CBG, boilers, biochar and industrial heat.
-          </p>
-        </div>
-      </div>
+      <LocationPicker />
 
-      <div className="layout-explorer">
-        <LocationPicker />
-
-        <section className="panel">
-          <div className="panel-head row">
-            <div>
-              <h2>{catchment.origin.label}</h2>
-              <p>
-                {catchment.districtCount} districts · {catchment.feedstockCount} feedstocks · avg haul{" "}
-                {catchment.avgDistanceKm} km
-              </p>
-            </div>
-            <button type="button" className="btn" onClick={() => setRadiusKm(optimiser.recommendedKm)}>
-              Use optimal {optimiser.recommendedKm} km
-            </button>
+      <section className="map-panel">
+        <div className="map-panel-head">
+          <div>
+            <h1>{catchment.origin.label}</h1>
+            <p>
+              {catchment.districtCount} districts in {catchment.radiusKm} km · {catchment.feedstockCount}{" "}
+              feedstocks · avg haul {catchment.avgDistanceKm} km
+            </p>
           </div>
-
-          <div className="kpi-strip">
+          <div className="kpi-inline">
             <div>
               <span>Surplus</span>
               <b>{catchment.ladder.surplusKtpa}</b>
@@ -127,33 +112,57 @@ export function ExplorerPage() {
               <b>{security.score}</b>
               <small>{security.grade}</small>
             </div>
+            <button type="button" className="btn" onClick={() => setRadiusKm(optimiser.recommendedKm)}>
+              Optimal {optimiser.recommendedKm} km
+            </button>
           </div>
+        </div>
 
-          <CatchmentMap
-            origin={catchment.origin}
-            radiusKm={catchment.radiusKm}
-            roadFactor={catchment.roadFactor}
-            districts={catchment.districts}
-            selectedDistrictId={focusDistrict}
-            onSelectDistrict={setFocusDistrict}
-          />
-        </section>
-      </div>
+        <CatchmentMap
+          origin={catchment.origin}
+          radiusKm={catchment.radiusKm}
+          roadFactor={catchment.roadFactor}
+          districts={catchment.districts}
+          selectedDistrictId={focusDistrict}
+          onSelectDistrict={setFocusDistrict}
+          height={540}
+        />
+
+        {focused && (
+          <div className="focus-bar">
+            <strong>
+              {focused.district}, {focused.state}
+            </strong>
+            <span>
+              {focused.selectedSurplusKtpa} KTPA · {focused.distanceKm} km · {focused.pctOfCatchment}% of catchment
+            </span>
+            <div className="mini-feeds">
+              {Object.entries(focused.selectedFeedstocks)
+                .sort((a, b) => b[1] - a[1])
+                .map(([k, v]) => (
+                  <span key={k}>
+                    {dataset.feedstocks.find((f) => f.id === k)?.label.split(" /")[0]}: {v}
+                  </span>
+                ))}
+            </div>
+          </div>
+        )}
+      </section>
 
       <div className="grid-2-lg">
         <section className="panel">
-          <div className="panel-head">
-            <h2>Feedstock intelligence</h2>
-            <p>Surplus within radius · filter chips above refine the catchment.</p>
-          </div>
+          <header className="panel-head">
+            <h2>Feedstocks</h2>
+            <p>Surplus in catchment</p>
+          </header>
           <div className="chart-box">
-            <ResponsiveContainer width="100%" height={240}>
+            <ResponsiveContainer width="100%" height={220}>
               <BarChart data={catchment.feedstockTotals.slice(0, 8)}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={60} />
+                <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} angle={-18} textAnchor="end" height={56} />
                 <YAxis tick={{ fontSize: 11 }} />
                 <Tooltip />
-                <Bar dataKey="surplusKtpa" fill="#0f766e" radius={[6, 6, 0, 0]} name="KTPA" />
+                <Bar dataKey="surplusKtpa" fill="#1f6b4a" radius={[4, 4, 0, 0]} name="KTPA" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -164,7 +173,7 @@ export function ExplorerPage() {
                   <th>Feedstock</th>
                   <th>KTPA</th>
                   <th>%</th>
-                  <th>Moisture</th>
+                  <th>Moist.</th>
                   <th>GCV</th>
                   <th>Ash</th>
                   <th>Season</th>
@@ -191,13 +200,10 @@ export function ExplorerPage() {
         </section>
 
         <section className="panel">
-          <div className="panel-head">
-            <h2>Catchment optimiser</h2>
-            <p>Compares {dataset.defaults.radiiKm.join(", ")} km for quantity, diversity and haul.</p>
-          </div>
-          <div className="opt-banner">
-            Recommended radius: <b>{optimiser.recommendedKm} km</b>
-          </div>
+          <header className="panel-head">
+            <h2>Radius optimiser</h2>
+            <p>Recommended {optimiser.recommendedKm} km</p>
+          </header>
           <ul className="rationale">
             {optimiser.rationale.map((r) => (
               <li key={r}>{r}</li>
@@ -211,7 +217,7 @@ export function ExplorerPage() {
                   <th>Surplus</th>
                   <th>Realistic</th>
                   <th>Δ KTPA</th>
-                  <th>Δ / km</th>
+                  <th>Δ/km</th>
                   <th>Feeds</th>
                   <th>Avg km</th>
                   <th>Score</th>
@@ -242,10 +248,10 @@ export function ExplorerPage() {
 
       <div className="grid-2-lg">
         <section className="panel">
-          <div className="panel-head">
+          <header className="panel-head">
             <h2>Supply security · {security.score}/100</h2>
-            <p>{security.grade} — risks beyond raw tonnage.</p>
-          </div>
+            <p>{security.grade}</p>
+          </header>
           <div className="sec-bars">
             {security.components.map((c) => (
               <div key={c.key} className="sec-row">
@@ -256,7 +262,6 @@ export function ExplorerPage() {
                 <div className="bar">
                   <i style={{ width: `${c.score}%` }} />
                 </div>
-                <small className="muted">{c.note}</small>
               </div>
             ))}
           </div>
@@ -268,37 +273,37 @@ export function ExplorerPage() {
         </section>
 
         <section className="panel">
-          <div className="panel-head">
-            <h2>Blend & application</h2>
-            <p>Optional quality gates for your end use.</p>
-          </div>
+          <header className="panel-head">
+            <h2>Application blend</h2>
+            <p>Quantity and quality gates</p>
+          </header>
           <div className="grid-2">
-            <label>
-              Required KTPA
+            <label className="field">
+              <span>Required KTPA</span>
               <input
                 type="number"
                 value={application.requiredKtpa}
                 onChange={(e) => setApplication({ ...application, requiredKtpa: Number(e.target.value) || 0 })}
               />
             </label>
-            <label>
-              Max moisture %
+            <label className="field">
+              <span>Max moisture %</span>
               <input
                 type="number"
                 value={application.maxMoisturePct}
                 onChange={(e) => setApplication({ ...application, maxMoisturePct: Number(e.target.value) || 0 })}
               />
             </label>
-            <label>
-              Min GCV (kcal/kg)
+            <label className="field">
+              <span>Min GCV</span>
               <input
                 type="number"
                 value={application.minGcvKcalPerKg}
                 onChange={(e) => setApplication({ ...application, minGcvKcalPerKg: Number(e.target.value) || 0 })}
               />
             </label>
-            <label>
-              Max ash %
+            <label className="field">
+              <span>Max ash %</span>
               <input
                 type="number"
                 value={application.maxAshPct}
@@ -321,88 +326,31 @@ export function ExplorerPage() {
                     setApplication({ ...application, preferredFeedstocks: next });
                   }}
                 >
-                  Prefer {f.label.split(" /")[0]}
+                  {f.label.split(" /")[0]}
                 </button>
               );
             })}
           </div>
           {blend && (
             <>
-              <div className="kpi-strip compact">
-                <div>
-                  <span>Blend total</span>
-                  <b>{blend.totalKtpa}</b>
-                  <small>KTPA</small>
-                </div>
-                <div>
-                  <span>Moisture</span>
-                  <b>{blend.avgMoisture}%</b>
-                </div>
-                <div>
-                  <span>GCV</span>
-                  <b>{blend.avgGcv}</b>
-                </div>
-                <div>
-                  <span>Ash</span>
-                  <b>{blend.avgAsh}%</b>
-                </div>
-              </div>
+              <p className="blend-summary">
+                Blend {blend.totalKtpa} KTPA · moisture {blend.avgMoisture}% · GCV {blend.avgGcv} · ash {blend.avgAsh}%
+              </p>
               <ul className="rationale">
                 {blend.notes.map((n) => (
                   <li key={n}>{n}</li>
                 ))}
               </ul>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Feedstock</th>
-                      <th>KTPA</th>
-                      <th>Share</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {blend.feedstocks.map((f) => (
-                      <tr key={f.id}>
-                        <td>{f.label}</td>
-                        <td>{f.ktpa}</td>
-                        <td>{f.sharePct}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
             </>
           )}
         </section>
       </div>
 
       <section className="panel">
-        <div className="panel-head row">
-          <div>
-            <h2>District contribution</h2>
-            <p>Click a row or map marker for the full biomass profile.</p>
-          </div>
-          {focused && (
-            <div className="focus-card">
-              <b>
-                {focused.district}, {focused.state}
-              </b>
-              <span>
-                {focused.selectedSurplusKtpa} KTPA · {focused.distanceKm} km · {focused.pctOfCatchment}%
-              </span>
-              <div className="mini-feeds">
-                {Object.entries(focused.selectedFeedstocks)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([k, v]) => (
-                    <span key={k}>
-                      {dataset.feedstocks.find((f) => f.id === k)?.label.split(" /")[0]}: {v}
-                    </span>
-                  ))}
-              </div>
-            </div>
-          )}
-        </div>
+        <header className="panel-head">
+          <h2>Districts in catchment</h2>
+          <p>Click a row or map point to inspect</p>
+        </header>
         <div className="table-wrap tall">
           <table>
             <thead>

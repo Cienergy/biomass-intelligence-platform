@@ -29,6 +29,12 @@ npm run dev
 npm run build
 ```
 
+## Deploy
+
+Pushes to `main` deploy via GitHub Pages:
+
+https://sajalsinha.github.io/biomass-intelligence-platform/
+
 ## Architecture notes
 
 - Modular TypeScript engines under `src/lib/` (catchment, optimiser, security, blend, compare, report)
