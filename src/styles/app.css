@@ -68,8 +68,7 @@ button { cursor: pointer; }
   font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--muted);
 }
-.field-district { min-width: 180px; }
-.field-search { min-width: 220px; position: relative; }
+.field-district { min-width: 220px; position: relative; }
 .field-sm { min-width: 100px; max-width: 120px; }
 .field input, .field select, .factors-row input, .grid-2 input, .grid-2 select {
   border: 1px solid var(--line); border-radius: 10px; padding: 0.5rem 0.65rem;
@@ -100,7 +99,7 @@ button { cursor: pointer; }
   width: 100%; text-align: left; border: 0; background: transparent;
   padding: 0.5rem 0.6rem; border-radius: 8px; display: flex; justify-content: space-between; gap: 0.5rem;
 }
-.suggest button:hover { background: var(--accent-soft); }
+.suggest button:hover, .suggest button.active { background: var(--accent-soft); }
 .suggest em { color: var(--muted); font-style: normal; font-size: 0.85rem; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; flex: 1; }

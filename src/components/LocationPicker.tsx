@@ -22,7 +22,7 @@ export function LocationPicker() {
     location.mode === "district" ? dataset?.districts.find((d) => d.id === location.districtId) : null;
 
   const [stateName, setStateName] = useState(selected?.state || "Haryana");
-  const [districtQuery, setDistrictQuery] = useState("");
+  const [districtQuery, setDistrictQuery] = useState(selected?.district || "");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [mode, setMode] = useState<"district" | "custom">(location.mode);
   const [customLat, setCustomLat] = useState(
@@ -38,6 +38,7 @@ export function LocationPicker() {
       const d = dataset?.districts.find((x) => x.id === location.districtId);
       if (d) {
         setStateName(d.state);
+        setDistrictQuery(d.district);
         setMode("district");
       }
     } else {
@@ -55,26 +56,15 @@ export function LocationPicker() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const districtsInState = useMemo(() => {
-    if (!dataset) return [];
-    return dataset.districts
-      .filter((d) => d.state === stateName)
-      .sort((a, b) => a.district.localeCompare(b.district));
-  }, [dataset, stateName]);
-
   const suggestions = useMemo(() => {
-    if (!dataset || !districtQuery.trim()) return districtsInState.slice(0, 12);
+    if (!dataset) return [];
     const q = districtQuery.trim().toLowerCase();
-    return dataset.districts
-      .filter(
-        (d) =>
-          d.district.toLowerCase().includes(q) ||
-          d.state.toLowerCase().includes(q) ||
-          d.id.toLowerCase().includes(q)
-      )
-      .sort((a, b) => a.district.localeCompare(b.district))
-      .slice(0, 20);
-  }, [dataset, districtQuery, districtsInState]);
+    const pool = dataset.districts.filter((d) => d.state === stateName);
+    const list = q
+      ? pool.filter((d) => d.district.toLowerCase().includes(q))
+      : pool;
+    return [...list].sort((a, b) => a.district.localeCompare(b.district)).slice(0, 30);
+  }, [dataset, stateName, districtQuery]);
 
   if (!dataset) return null;
 
@@ -83,7 +73,7 @@ export function LocationPicker() {
     if (!d) return;
     setLocation({ mode: "district", districtId });
     setStateName(d.state);
-    setDistrictQuery("");
+    setDistrictQuery(d.district);
     setShowSuggestions(false);
     setMode("district");
   };
@@ -123,8 +113,14 @@ export function LocationPicker() {
                 onChange={(e) => {
                   const next = e.target.value;
                   setStateName(next);
-                  const first = dataset.districts.find((d) => d.state === next);
+                  const first = dataset.districts
+                    .filter((d) => d.state === next)
+                    .sort((a, b) => a.district.localeCompare(b.district))[0];
                   if (first) pickDistrict(first.id);
+                  else {
+                    setDistrictQuery("");
+                    setShowSuggestions(true);
+                  }
                 }}
               >
                 {dataset.states.map((s) => (
@@ -135,42 +131,36 @@ export function LocationPicker() {
               </select>
             </label>
 
-            <label className="field field-district">
+            <div className="field field-district" ref={boxRef}>
               <span>District</span>
-              <select
-                value={selected?.id || districtsInState[0]?.id || ""}
-                onChange={(e) => pickDistrict(e.target.value)}
-              >
-                {districtsInState.length === 0 ? (
-                  <option value="">No districts</option>
-                ) : (
-                  districtsInState.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.district}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-
-            <div className="field field-search" ref={boxRef}>
-              <span>Search district</span>
               <input
-                placeholder="Type district or state…"
+                aria-label="District"
+                placeholder="Search or pick district…"
                 value={districtQuery}
                 onChange={(e) => {
                   setDistrictQuery(e.target.value);
                   setShowSuggestions(true);
                 }}
                 onFocus={() => setShowSuggestions(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && suggestions[0]) {
+                    e.preventDefault();
+                    pickDistrict(suggestions[0].id);
+                  }
+                  if (e.key === "Escape") setShowSuggestions(false);
+                }}
               />
               {showSuggestions && suggestions.length > 0 && (
                 <ul className="suggest">
                   {suggestions.map((d) => (
                     <li key={d.id}>
-                      <button type="button" onClick={() => pickDistrict(d.id)}>
+                      <button
+                        type="button"
+                        className={d.id === selected?.id ? "active" : ""}
+                        onClick={() => pickDistrict(d.id)}
+                      >
                         <strong>{d.district}</strong>
-                        <em>{d.state}</em>
+                        <em>{d.totalSurplusKtpa} KTPA</em>
                       </button>
                     </li>
                   ))}
@@ -283,15 +273,6 @@ export function LocationPicker() {
           </div>
         </details>
       </div>
-
-      {selected && (
-        <div className="selected-pill">
-          Selected: <strong>{selected.district}</strong>, {selected.state}
-          <span>
-            {selected.lat.toFixed(2)}°N, {selected.lon.toFixed(2)}°E · {selected.totalSurplusKtpa} KTPA surplus
-          </span>
-        </div>
-      )}
     </section>
   );
 }
