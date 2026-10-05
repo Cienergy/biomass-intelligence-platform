@@ -12,12 +12,11 @@ import {
   type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-// Vite must emit the worker into assets; MapLibre's default relative URL 404s on GH Pages.
-import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { CatchmentDistrict } from "../lib/catchment";
 import type { Feature, FeatureCollection, Point, Polygon } from "geojson";
 
-setWorkerUrl(maplibreWorkerUrl);
+// Worker + shared must be served as sibling files (see vite copy-maplibre-worker plugin).
+setWorkerUrl(`${import.meta.env.BASE_URL}maplibre/maplibre-gl-worker.mjs`);
 
 type Props = {
   origin: { lat: number; lon: number; label: string };
