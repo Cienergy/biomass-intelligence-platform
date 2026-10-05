@@ -24,10 +24,17 @@ type Props = {
   height?: number;
 };
 
+type OverlayState = {
+  origin: Props["origin"];
+  radiusKm: number;
+  roadFactor: number;
+  districts: CatchmentDistrict[];
+  selectedDistrictId?: string | null;
+};
+
 function cartoStyle(): StyleSpecification {
   const key = (import.meta.env.VITE_CARTO_API_KEY as string | undefined)?.trim();
   const q = key ? `?key=${encodeURIComponent(key)}` : "";
-  // CARTO raster tiles — key removes the "API key required" watermark
   const path = `rastertiles/voyager/{z}/{x}/{y}.png${q}`;
   return {
     version: 8,
@@ -48,7 +55,7 @@ function cartoStyle(): StyleSpecification {
   };
 }
 
-function circlePolygon(lon: number, lat: number, radiusKm: number, steps = 64): Feature<Polygon> {
+function circlePolygon(lon: number, lat: number, radiusKm: number, steps = 72): Feature<Polygon> {
   const coords: [number, number][] = [];
   const earth = 6371;
   for (let i = 0; i <= steps; i++) {
@@ -77,6 +84,116 @@ function emptyFc(): FeatureCollection {
   return { type: "FeatureCollection", features: [] };
 }
 
+function ensureOverlayLayers(map: MapLibreMap) {
+  if (map.getSource("catchment-ring")) return;
+
+  map.addSource("catchment-ring", { type: "geojson", data: emptyFc() });
+  map.addLayer({
+    id: "catchment-fill",
+    type: "fill",
+    source: "catchment-ring",
+    paint: { "fill-color": "#15803d", "fill-opacity": 0.18 },
+  });
+  map.addLayer({
+    id: "catchment-line",
+    type: "line",
+    source: "catchment-ring",
+    paint: { "line-color": "#14532d", "line-width": 3, "line-opacity": 1 },
+  });
+
+  map.addSource("facility", { type: "geojson", data: emptyFc() });
+  map.addLayer({
+    id: "facility-glow",
+    type: "circle",
+    source: "facility",
+    paint: {
+      "circle-radius": 16,
+      "circle-color": "#c4a35a",
+      "circle-opacity": 0.35,
+    },
+  });
+  map.addLayer({
+    id: "facility-point",
+    type: "circle",
+    source: "facility",
+    paint: {
+      "circle-radius": 10,
+      "circle-color": "#d4a017",
+      "circle-stroke-color": "#111827",
+      "circle-stroke-width": 2.5,
+    },
+  });
+
+  map.addSource("districts", { type: "geojson", data: emptyFc() });
+  map.addLayer({
+    id: "district-points",
+    type: "circle",
+    source: "districts",
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["get", "surplus"], 0, 7, 25, 10, 100, 14, 300, 18, 800, 22],
+      "circle-color": [
+        "case",
+        ["==", ["get", "selected"], 1],
+        "#ea580c",
+        ["interpolate", ["linear"], ["get", "intensity"], 0, "#38bdf8", 1, "#1d4ed8"],
+      ],
+      "circle-opacity": 0.95,
+      "circle-stroke-color": "#ffffff",
+      "circle-stroke-width": 2,
+    },
+  });
+}
+
+function paintOverlay(map: MapLibreMap, state: OverlayState) {
+  ensureOverlayLayers(map);
+  const { origin, radiusKm, roadFactor, districts, selectedDistrictId } = state;
+  const geoRadiusKm = Math.max(1, radiusKm / Math.max(roadFactor, 0.01));
+  const ring = circlePolygon(origin.lon, origin.lat, geoRadiusKm);
+
+  (map.getSource("catchment-ring") as GeoJSONSource).setData({
+    type: "FeatureCollection",
+    features: [ring],
+  });
+  (map.getSource("facility") as GeoJSONSource).setData({
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        properties: { label: origin.label },
+        geometry: { type: "Point", coordinates: [origin.lon, origin.lat] },
+      },
+    ],
+  });
+
+  const max = Math.max(1, ...districts.map((d) => d.selectedSurplusKtpa));
+  (map.getSource("districts") as GeoJSONSource).setData({
+    type: "FeatureCollection",
+    features: districts
+      .filter((d) => Number.isFinite(d.lat) && Number.isFinite(d.lon))
+      .map((d) => ({
+        type: "Feature" as const,
+        properties: {
+          id: d.id,
+          name: d.district,
+          state: d.state,
+          surplus: d.selectedSurplusKtpa,
+          distance: d.distanceKm,
+          pct: d.pctOfCatchment,
+          intensity: d.selectedSurplusKtpa / max,
+          selected: d.id === selectedDistrictId ? 1 : 0,
+        },
+        geometry: { type: "Point" as const, coordinates: [d.lon, d.lat] },
+      })),
+  });
+
+  const b = new LngLatBounds();
+  b.extend([origin.lon, origin.lat]);
+  // Fit to catchment ring extent, not only district points
+  for (const c of ring.geometry.coordinates[0]) b.extend(c as [number, number]);
+  map.fitBounds(b, { padding: 48, maxZoom: 9, duration: 500 });
+  map.resize();
+}
+
 export function CatchmentMap({
   origin,
   radiusKm,
@@ -90,6 +207,7 @@ export function CatchmentMap({
   const mapRef = useRef<MapLibreMap | null>(null);
   const popupRef = useRef<Popup | null>(null);
   const readyRef = useRef(false);
+  const pendingRef = useRef<OverlayState | null>(null);
   const onSelectRef = useRef(onSelectDistrict);
   onSelectRef.current = onSelectDistrict;
   const [mapError, setMapError] = useState<string | null>(null);
@@ -109,59 +227,17 @@ export function CatchmentMap({
       map.addControl(new NavigationControl({ visualizePitch: false }), "top-right");
       map.addControl(new ScaleControl({ unit: "metric" }), "bottom-left");
       popupRef.current = new Popup({ closeButton: true, maxWidth: "260px" });
+      mapRef.current = map;
 
       map.on("error", (e) => {
         console.warn("map error", e.error);
       });
 
-      map.on("load", () => {
-        if (cancelled) return;
-        map.addSource("catchment-ring", { type: "geojson", data: emptyFc() });
-        map.addLayer({
-          id: "catchment-fill",
-          type: "fill",
-          source: "catchment-ring",
-          paint: { "fill-color": "#1f6b4a", "fill-opacity": 0.1 },
-        });
-        map.addLayer({
-          id: "catchment-line",
-          type: "line",
-          source: "catchment-ring",
-          paint: { "line-color": "#1f6b4a", "line-width": 2, "line-opacity": 0.9 },
-        });
-
-        map.addSource("facility", { type: "geojson", data: emptyFc() });
-        map.addLayer({
-          id: "facility-point",
-          type: "circle",
-          source: "facility",
-          paint: {
-            "circle-radius": 9,
-            "circle-color": "#c4a35a",
-            "circle-stroke-color": "#14201a",
-            "circle-stroke-width": 2,
-          },
-        });
-
-        map.addSource("districts", { type: "geojson", data: emptyFc() });
-        map.addLayer({
-          id: "district-points",
-          type: "circle",
-          source: "districts",
-          paint: {
-            "circle-radius": ["interpolate", ["linear"], ["get", "surplus"], 0, 5, 50, 8, 200, 14, 500, 18],
-            "circle-color": [
-              "case",
-              ["==", ["get", "selected"], 1],
-              "#b7791f",
-              ["interpolate", ["linear"], ["get", "intensity"], 0, "#93c5fd", 1, "#1d4ed8"],
-            ],
-            "circle-opacity": 0.92,
-            "circle-stroke-color": "#fff",
-            "circle-stroke-width": 1.25,
-          },
-        });
-
+      let wired = false;
+      const onReady = () => {
+        if (cancelled || wired) return;
+        wired = true;
+        ensureOverlayLayers(map);
         map.on("mouseenter", "district-points", () => {
           map.getCanvas().style.cursor = "pointer";
         });
@@ -171,8 +247,7 @@ export function CatchmentMap({
         map.on("click", "district-points", (e: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
           const f = e.features?.[0];
           if (!f?.properties || f.geometry.type !== "Point") return;
-          const id = String(f.properties.id);
-          onSelectRef.current?.(id);
+          onSelectRef.current?.(String(f.properties.id));
           const coords = (f.geometry as Point).coordinates as [number, number];
           popupRef.current
             ?.setLngLat(coords)
@@ -181,12 +256,14 @@ export function CatchmentMap({
             )
             .addTo(map);
         });
-
         readyRef.current = true;
+        if (pendingRef.current) paintOverlay(map, pendingRef.current);
         requestAnimationFrame(() => map.resize());
-      });
+      };
 
-      mapRef.current = map;
+      map.on("load", onReady);
+      // Inline styles can be ready before 'load' listeners attach
+      if (map.isStyleLoaded()) onReady();
     } catch (err) {
       setMapError(String(err));
     }
@@ -201,58 +278,19 @@ export function CatchmentMap({
   }, []);
 
   useEffect(() => {
+    const state: OverlayState = { origin, radiusKm, roadFactor, districts, selectedDistrictId };
+    pendingRef.current = state;
     const map = mapRef.current;
     if (!map) return;
-
-    const apply = () => {
-      if (!map.getSource("catchment-ring")) return;
-      const geoRadiusKm = radiusKm / Math.max(roadFactor, 0.01);
-      const ring = circlePolygon(origin.lon, origin.lat, geoRadiusKm);
-      (map.getSource("catchment-ring") as GeoJSONSource).setData({
-        type: "FeatureCollection",
-        features: [ring],
-      });
-      (map.getSource("facility") as GeoJSONSource).setData({
-        type: "FeatureCollection",
-        features: [
-          {
-            type: "Feature",
-            properties: { label: origin.label },
-            geometry: { type: "Point", coordinates: [origin.lon, origin.lat] },
-          },
-        ],
-      });
-
-      const max = Math.max(1, ...districts.map((d) => d.selectedSurplusKtpa));
-      (map.getSource("districts") as GeoJSONSource).setData({
-        type: "FeatureCollection",
-        features: districts.map((d) => ({
-          type: "Feature" as const,
-          properties: {
-            id: d.id,
-            name: d.district,
-            state: d.state,
-            surplus: d.selectedSurplusKtpa,
-            distance: d.distanceKm,
-            pct: d.pctOfCatchment,
-            intensity: d.selectedSurplusKtpa / max,
-            selected: d.id === selectedDistrictId ? 1 : 0,
-          },
-          geometry: { type: "Point" as const, coordinates: [d.lon, d.lat] },
-        })),
-      });
-
-      const b = new LngLatBounds();
-      b.extend([origin.lon, origin.lat]);
-      for (const d of districts) b.extend([d.lon, d.lat]);
-      if (districts.length) map.fitBounds(b, { padding: 56, maxZoom: 8.5, duration: 600 });
-      else map.easeTo({ center: [origin.lon, origin.lat], zoom: 7, duration: 600 });
-      map.resize();
-    };
-
-    if (readyRef.current && map.isStyleLoaded()) apply();
-    else map.once("load", apply);
-  }, [origin.lat, origin.lon, origin.label, radiusKm, roadFactor, districts, selectedDistrictId]);
+    if (readyRef.current || map.isStyleLoaded()) {
+      try {
+        paintOverlay(map, state);
+        readyRef.current = true;
+      } catch (err) {
+        console.warn("overlay paint deferred", err);
+      }
+    }
+  }, [origin, radiusKm, roadFactor, districts, selectedDistrictId]);
 
   return (
     <div className="map-shell" style={{ height }}>
