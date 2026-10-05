@@ -24,23 +24,29 @@ type Props = {
   height?: number;
 };
 
-/** Free raster basemap — no API key, works without external style/glyphs. */
-const BASE_STYLE: StyleSpecification = {
-  version: 8,
-  sources: {
-    carto: {
-      type: "raster",
-      tiles: [
-        "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-        "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-        "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-      ],
-      tileSize: 256,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+function cartoStyle(): StyleSpecification {
+  const key = (import.meta.env.VITE_CARTO_API_KEY as string | undefined)?.trim();
+  const q = key ? `?key=${encodeURIComponent(key)}` : "";
+  // CARTO raster tiles — key removes the "API key required" watermark
+  const path = `rastertiles/voyager/{z}/{x}/{y}.png${q}`;
+  return {
+    version: 8,
+    sources: {
+      carto: {
+        type: "raster",
+        tiles: [
+          `https://a.basemaps.cartocdn.com/${path}`,
+          `https://b.basemaps.cartocdn.com/${path}`,
+          `https://c.basemaps.cartocdn.com/${path}`,
+        ],
+        tileSize: 256,
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      },
     },
-  },
-  layers: [{ id: "carto", type: "raster", source: "carto" }],
-};
+    layers: [{ id: "carto", type: "raster", source: "carto" }],
+  };
+}
 
 function circlePolygon(lon: number, lat: number, radiusKm: number, steps = 64): Feature<Polygon> {
   const coords: [number, number][] = [];
@@ -95,7 +101,7 @@ export function CatchmentMap({
     try {
       const map = new MapLibreMap({
         container: containerRef.current,
-        style: BASE_STYLE,
+        style: cartoStyle(),
         center: [origin.lon, origin.lat],
         zoom: 7,
         attributionControl: { compact: true },
@@ -266,7 +272,7 @@ export function CatchmentMap({
           <i className="ring" /> Catchment (~{Math.round(radiusKm / Math.max(roadFactor, 0.01))} km geo)
         </span>
       </div>
-      <div className="map-credit">MapLibre · CARTO / OSM</div>
+      <div className="map-credit">MapLibre · CARTO Voyager · OSM</div>
     </div>
   );
 }

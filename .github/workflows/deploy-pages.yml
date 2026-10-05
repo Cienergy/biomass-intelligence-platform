@@ -27,6 +27,7 @@ jobs:
       - run: npm run build
         env:
           VITE_BASE: /biomass-intelligence-platform/
+          VITE_CARTO_API_KEY: ${{ secrets.VITE_CARTO_API_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
