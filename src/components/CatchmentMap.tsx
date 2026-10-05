@@ -5,14 +5,19 @@ import {
   ScaleControl,
   Popup,
   LngLatBounds,
+  setWorkerUrl,
   type GeoJSONSource,
   type MapMouseEvent,
   type MapGeoJSONFeature,
   type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+// Vite must emit the worker into assets; MapLibre's default relative URL 404s on GH Pages.
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { CatchmentDistrict } from "../lib/catchment";
 import type { Feature, FeatureCollection, Point, Polygon } from "geojson";
+
+setWorkerUrl(maplibreWorkerUrl);
 
 type Props = {
   origin: { lat: number; lon: number; label: string };
